@@ -43,18 +43,10 @@ function defaultState() {
   };
 }
 
-/* Starter groups, based on the original spreadsheet.
-   Only inserted once, on first launch — the user can edit or delete
-   any of it freely afterwards. No monthly values are pre-filled.
-   Cartão de crédito starts empty: cards purchases are lançadas one by one,
-   each tagged with the card and whether it's única or parcelada. */
-const STARTER_GROUPS = [
-  { name: "Moradia", items: ["Prestação da casa", "Luz", "Água", "Internet", "IPTU", "Telefone (meu)", "Telefone (trabalho)", "MEI", "TV", "Gás"] },
-  { name: "Alimentação", items: ["Mercado", "Comida pronta", "Restaurante"] },
-  { name: "Saúde", items: ["Prever", "Plano de saúde", "Farmácia"] },
-  { name: "Mãe", items: ["Internet", "Celular", "TV"] },
-  { name: "Cartão de crédito", items: [], isCard: true }
-];
+/* Starter groups: vazio de propósito — o app abre sem nenhum grupo
+   pré-cadastrado. O usuário cria os grupos que quiser pelo botão "+"
+   na barra de baixo. */
+const STARTER_GROUPS = [];
 
 function seedStarterGroups() {
   STARTER_GROUPS.forEach((g) => {
