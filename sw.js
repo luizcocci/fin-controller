@@ -1,4 +1,4 @@
-const CACHE = "fin-controller-v3";
+const CACHE = "fin-controller-v4";
 const ASSETS = [
   "./",
   "./index.html",

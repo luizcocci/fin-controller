@@ -10,9 +10,10 @@ const STORE = "state";
 const STATE_KEY = "app-state";
 
 const MESES = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
-const MESES_ABREV = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
 
 const GROUP_COLORS = ["#e8a0bb", "#b39ddb", "#e0c097", "#e8918a", "#8fc9d6", "#c9b3e8", "#9ed6b0", "#e8c1e0"];
+
+let categoryFormColor = GROUP_COLORS[0]; // cor selecionada no formulário de nova categoria
 
 let db = null;
 let cache = null; // in-memory mirror of state, always source of truth for rendering
@@ -35,7 +36,8 @@ function groupColor(index) {
 function defaultState() {
   return {
     groups: [],           // [{id, name, isCard}]
-    items: [],             // [{id, groupId, name, type, fixedValue?, card?, installmentValue?, installments?, startYm?}]
+    items: [],             // [{id, groupId, name, type, fixedValue?, card?, installmentValue?, installments?, startYm?, categoryId?}]
+    categories: [],         // [{id, name, color}]
     monthlyValues: {},     // { "itemId|YYYY-MM": number }  (overrides for tipo variável/fixo)
     monthlyIncome: {},     // { "YYYY-MM": number }
     extraIncome: {},       // { "YYYY-MM": [{id, desc, value}] }
@@ -356,17 +358,17 @@ function renderHistory() {
   const wrap = document.getElementById("historyWrap");
   wrap.innerHTML = "";
 
-  const months = new Set();
-  Object.keys(cache.monthlyIncome).forEach((ym) => months.add(ym));
-  Object.keys(cache.extraIncome).forEach((ym) => months.add(ym));
-  Object.keys(cache.monthlyValues).forEach((k) => months.add(k.split("|")[1]));
-  months.add(currentYM);
-
-  const sorted = Array.from(months).sort().reverse().slice(0, 6);
-
-  if (sorted.length === 0) {
-    wrap.innerHTML = `<p class="empty-hint">Sem histórico ainda.</p>`;
-    return;
+  /* Antes, os meses do histórico eram descobertos varrendo apenas chaves
+     já salvas (renda, extras, lançamentos). Isso deixava de fora meses em
+     que a única movimentação era um item fixo ou parcelado (calculados na
+     hora, sem gravar chave nenhuma) — por isso o gasto "sumia" do
+     histórico em meses futuros. Agora o período é sempre os 6 meses
+     terminando no mês atual, calculados diretamente pela data, então
+     fixos e parcelados aparecem corretamente. */
+  const sorted = [];
+  for (let i = 0; i < 6; i++) {
+    const d = new Date(current.getFullYear(), current.getMonth() - i, 1);
+    sorted.push(ymKey(d));
   }
 
   sorted.forEach((ym) => {
@@ -429,6 +431,10 @@ function renderGroupPanels() {
           const idx = it.startYm ? monthDiff(currentYM, it.startYm) : -1;
           const label = (idx >= 0 && idx < it.installments) ? `${idx + 1}/${it.installments}` : `${it.installments}x`;
           tags.push(`<span class="item-tag tag-parcelado">parcela ${label}</span>`);
+        }
+        if (it.categoryId) {
+          const cat = cache.categories.find((c) => c.id === it.categoryId);
+          if (cat) tags.push(`<span class="item-tag" style="background:${cat.color}2e;color:${cat.color};">${escapeHtml(cat.name)}</span>`);
         }
 
         const nameCol = `
@@ -585,6 +591,127 @@ function openRenameGroupModal(groupId) {
   );
 }
 
+/* ---------------- Categorias: criar / editar / excluir ---------------- */
+
+function colorSwatchesHtml(selected) {
+  return GROUP_COLORS.map((c) => `
+    <span class="color-swatch" data-color="${c}" style="display:inline-block;width:24px;height:24px;border-radius:50%;background:${c};margin:3px 5px 3px 0;cursor:pointer;border:2px solid ${c === selected ? "var(--text)" : "transparent"};"></span>
+  `).join("");
+}
+
+/* Renderiza os círculos de cor num container e liga os cliques,
+   religando de novo a cada escolha (já que o HTML é substituído). */
+function renderCatSwatches(containerId, getSelected, onPick) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.innerHTML = colorSwatchesHtml(getSelected());
+  container.querySelectorAll("[data-color]").forEach((sw) => {
+    sw.addEventListener("click", () => {
+      onPick(sw.getAttribute("data-color"));
+      renderCatSwatches(containerId, getSelected, onPick);
+    });
+  });
+}
+
+function categoryRowsHtml() {
+  if (!cache.categories.length) {
+    return `<p class="empty-hint" style="margin:0 0 14px;">Nenhuma categoria criada ainda.</p>`;
+  }
+  return cache.categories.map((c) => `
+    <div class="item-row" style="justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--border);">
+      <span class="iname" style="display:flex;align-items:center;gap:8px;color:var(--text);white-space:normal;">
+        <span style="width:9px;height:9px;border-radius:50%;background:${c.color};display:inline-block;flex-shrink:0;"></span>
+        ${escapeHtml(c.name)}
+      </span>
+      <span style="display:flex;gap:4px;flex-shrink:0;">
+        <button type="button" class="link-btn" data-edit-cat="${c.id}" style="padding:2px 8px;">editar</button>
+        <button type="button" class="link-btn" data-del-cat="${c.id}" style="padding:2px 8px;color:var(--coral);">excluir</button>
+      </span>
+    </div>
+  `).join("");
+}
+
+function wireCatListEvents() {
+  const box = document.getElementById("modalBox");
+  box.querySelectorAll("[data-edit-cat]").forEach((btn) => {
+    btn.addEventListener("click", () => openRenameCategoryModal(btn.getAttribute("data-edit-cat")));
+  });
+  box.querySelectorAll("[data-del-cat]").forEach((btn) => {
+    btn.addEventListener("click", () => confirmDeleteCategory(btn.getAttribute("data-del-cat")));
+  });
+}
+
+function openCategoryManagerModal() {
+  categoryFormColor = GROUP_COLORS[cache.categories.length % GROUP_COLORS.length];
+  openModal(
+    "Gerenciar categorias",
+    `<div id="catListArea">${categoryRowsHtml()}</div>
+     <div class="field"><label>Nova categoria</label><input type="text" id="fNewCatName" placeholder="Ex: Farmácia, Mercado..."></div>
+     <div class="field">
+       <label>Cor</label>
+       <div id="catColorSwatches"></div>
+     </div>
+     <button type="button" class="link-btn" id="addCategoryBtn">+ adicionar categoria</button>`,
+    () => {}, // botão principal só fecha; criar/editar/excluir tem seus próprios botões
+    { confirmLabel: "Fechar" }
+  );
+  wireCatListEvents();
+  renderCatSwatches("catColorSwatches", () => categoryFormColor, (c) => { categoryFormColor = c; });
+  document.getElementById("addCategoryBtn").addEventListener("click", addCategoryFromForm);
+}
+
+function addCategoryFromForm() {
+  const nameInput = document.getElementById("fNewCatName");
+  const name = nameInput.value.trim();
+  if (!name) { toast("Dê um nome à categoria"); return; }
+  cache.categories.push({ id: uid(), name, color: categoryFormColor });
+  persist();
+  toast("Categoria criada");
+  nameInput.value = "";
+  const area = document.getElementById("catListArea");
+  if (area) { area.innerHTML = categoryRowsHtml(); wireCatListEvents(); }
+  render();
+}
+
+function openRenameCategoryModal(catId) {
+  const cat = cache.categories.find((c) => c.id === catId);
+  if (!cat) return;
+  let localColor = cat.color;
+  openModal(
+    "Editar categoria",
+    `<div class="field"><label>Nome</label><input type="text" id="fCatRename" value="${escapeHtml(cat.name)}"></div>
+     <div class="field"><label>Cor</label><div id="editCatColorSwatches"></div></div>`,
+    () => {
+      const name = document.getElementById("fCatRename").value.trim();
+      if (!name) { toast("Dê um nome à categoria"); return false; }
+      cat.name = name;
+      cat.color = localColor;
+      persist();
+      render();
+      toast("Categoria atualizada");
+    },
+    { confirmLabel: "Salvar" }
+  );
+  renderCatSwatches("editCatColorSwatches", () => localColor, (c) => { localColor = c; });
+}
+
+function confirmDeleteCategory(catId) {
+  const cat = cache.categories.find((c) => c.id === catId);
+  if (!cat) return;
+  openModal(
+    `Excluir categoria "${cat.name}"?`,
+    `<p style="color:var(--muted);font-size:0.88rem;line-height:1.5;">Os itens que usam essa categoria voltam a ficar sem categoria. Essa ação não pode ser desfeita.</p>`,
+    () => {
+      cache.items.forEach((it) => { if (it.categoryId === catId) it.categoryId = null; });
+      cache.categories = cache.categories.filter((c) => c.id !== catId);
+      persist();
+      render();
+      toast("Categoria excluída");
+    },
+    { confirmLabel: "Excluir", danger: true }
+  );
+}
+
 /* ---- Item modal: cobre criação e edição, com os 3 tipos e o campo de cartão ---- */
 
 function monthLabelFromYm(ym) {
@@ -643,6 +770,13 @@ function openItemModal(groupId, itemId) {
       </div>
     </div>
     <div id="typeFieldsWrap">${typeFieldsHtml(selectedType, existing)}</div>
+    <div class="field">
+      <label>Categoria <span style="color:var(--muted);font-weight:400;">(opcional)</span></label>
+      <select id="fItemCategory">
+        <option value="">Nenhuma</option>
+        ${cache.categories.map((c) => `<option value="${c.id}" ${existing && existing.categoryId === c.id ? "selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}
+      </select>
+    </div>
   `;
 
   openModal(
@@ -652,7 +786,8 @@ function openItemModal(groupId, itemId) {
       const name = document.getElementById("fItemName").value.trim();
       if (!name) { toast("Dê um nome"); return false; }
 
-      const payload = { name, type: selectedType };
+      const catVal = document.getElementById("fItemCategory").value;
+      const payload = { name, type: selectedType, categoryId: catVal || null };
 
       if (group.isCard) {
         const card = document.getElementById("fItemCard").value.trim();
@@ -848,6 +983,9 @@ async function init() {
   db = await openDB();
   cache = await loadState();
 
+  // compatibilidade: quem já tinha dados salvos antes das categorias existirem
+  if (!cache.categories) cache.categories = [];
+
   if (!cache.seeded) {
     seedStarterGroups();
     persist();
@@ -855,6 +993,7 @@ async function init() {
 
   document.getElementById("prevMonth").addEventListener("click", () => changeMonth(-1));
   document.getElementById("nextMonth").addEventListener("click", () => changeMonth(1));
+  document.getElementById("manageCategoriesBtn").addEventListener("click", openCategoryManagerModal);
 
   document.getElementById("monthlyIncomeInput").addEventListener("input", (e) => {
     cache.monthlyIncome[currentYM] = e.target.value === "" ? undefined : Number(e.target.value);
