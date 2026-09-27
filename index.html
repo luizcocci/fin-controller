@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Fin Controller</title>
+<title>Controle Financeiro</title>
 <meta name="description" content="Controle financeiro pessoal — grupos livres, receita e relatórios mensais.">
 
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#1a141e">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Fin Controller">
+<meta name="apple-mobile-web-app-title" content="Controle Financeiro">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="icon" href="icon-192.png">
 
@@ -23,7 +23,7 @@
   <header class="app-header">
     <div class="brand">
       <div class="brand-mark">🌸</div>
-      <span class="brand-name">Fin Controller</span>
+      <span class="brand-name">Controle Financeiro</span>
     </div>
   </header>
 
@@ -100,34 +100,6 @@
     </div>
   </section>
 
-  <!-- ABA: EDITAR (grupos + categorias, tudo inline — igual ao controle-fin-v9.html) -->
-  <section class="tab-panel" id="tab-edit">
-    <div class="card">
-      <div class="card-title"><h2>Grupos ativos</h2></div>
-      <div id="editGroupList"></div>
-    </div>
-
-    <div class="card">
-      <div class="card-title"><h2>+ Criar novo grupo</h2></div>
-      <div class="field"><label>Nome do grupo</label><input type="text" id="newGroupName" placeholder="Ex: Lazer, Saúde..."></div>
-      <label class="checkbox-row">
-        <input type="checkbox" id="newGroupIsCard">
-        <span>Este grupo é de cartão de crédito</span>
-      </label>
-      <div class="field" style="margin-top:10px;">
-        <label>Cor</label>
-        <div id="newGroupColorPicks"></div>
-      </div>
-      <button class="primary-btn" id="createGroupBtn">Criar Grupo</button>
-    </div>
-
-    <div class="card">
-      <div class="card-title"><h2>Categorias</h2></div>
-      <div id="editCatList"></div>
-      <button class="link-btn" id="newCatBtnTab" style="margin-top:8px;">+ Nova Categoria</button>
-    </div>
-  </section>
-
   <!-- ABAS: uma por grupo (geradas dinamicamente) -->
   <div id="groupPanelsWrap"></div>
 
@@ -150,4 +122,3 @@
 <script src="app.js"></script>
 </body>
 </html>
-
