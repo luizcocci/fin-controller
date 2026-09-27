@@ -1,4 +1,4 @@
-# Fin Controller — como publicar no GitHub Pages
+# Controle Financeiro — como publicar no GitHub Pages
 
 Este pacote contém tudo que é preciso para colocar o app no ar, direto do
 celular Android, usando uma conta GitHub própria.
@@ -21,7 +21,7 @@ Basta logar nela e seguir a partir do passo 2.
 
 2. **Criar um repositório novo**
    - No canto superior direito, clique em **+** → **New repository**
-   - Nome sugerido: `fin-controller`
+   - Nome sugerido: `controle-financeiro`
    - Marque como **Public**
    - Clique em **Create repository**
 
@@ -37,7 +37,7 @@ Basta logar nela e seguir a partir do passo 2.
    - Clique em **Save**
    - Aguarde 1–2 minutos. O link vai aparecer no topo dessa mesma página,
      algo como:
-     `https://julianatalliatel.github.io/fin-controller/`
+     `https://julianatalliatel.github.io/controle-financeiro/`
 
 5. **Instalar no Android**
    - Abra esse link no Chrome do celular
