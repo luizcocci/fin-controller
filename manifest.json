@@ -1,6 +1,6 @@
 {
-  "name": "Fin Controller",
-  "short_name": "Fin Controller",
+  "name": "Controle Financeiro",
+  "short_name": "Controle Fin",
   "description": "Controle financeiro pessoal — grupos livres, receitas e relatórios mensais.",
   "start_url": "./index.html",
   "scope": "./",
