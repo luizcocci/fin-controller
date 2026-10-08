@@ -35,8 +35,8 @@ function groupColor(index) {
 function defaultState() {
   return {
     groups: [],           // [{id, name, isCard}]
-    items: [],             // [{id, groupId, name, type, fixedValue?, card?, installmentValue?, installments?, startYm?, dataLanc?, diaVenc?}]
-    monthlyValues: {},     // { "itemId|YYYY-MM": number }  (overrides for tipo variável/fixo)
+    items: [],             // [{id, groupId, name, type, fixedValue?, card?, installmentValue?, totalValue?, installments?, startYm?, dataLanc?, diaVenc?}]
+    monthlyValues: {},     // { "itemId|YYYY-MM": number }  (overrides for tipo variável/fixo/parcelado)
     monthlyIncome: {},     // { "YYYY-MM": number }
     extraIncome: {},       // { "YYYY-MM": [{id, desc, value}] }
     seeded: false           // whether the starter groups have been created yet
@@ -122,10 +122,38 @@ function monthDiff(ymA, ymB) {
   return (ya - yb) * 12 + (ma - mb);
 }
 
+/* Parcelamento pelo valor total da compra: divide em centavos inteiros
+   e manda a sobra de centavos para a 1ª parcela.
+   Ex.: 1000 em 3x => 333,34 + 333,33 + 333,33 (soma = 1000,00). */
+function parcSchedule(total, n) {
+  const t = Math.round(Number(total) * 100);
+  const base = Math.floor(t / n);
+  const resto = t - base * n;
+  return { base: base / 100, first: (base + resto) / 100, rest: resto > 0 };
+}
+
+// idx é o índice da parcela em base 0 (0 = primeira parcela)
+function parcValue(total, n, idx) {
+  const s = parcSchedule(total, n);
+  return idx === 0 ? s.first : s.base;
+}
+
+function parcPreviewText(total, n) {
+  if (!(Number(total) > 0) || !n || n < 2) {
+    return "Digite o valor total da compra e o nº de parcelas — o app calcula cada parcela.";
+  }
+  const s = parcSchedule(total, n);
+  return s.rest
+    ? `1ª parcela ${fmtMoney(s.first)} + ${n - 1}× de ${fmtMoney(s.base)}`
+    : `${n}× de ${fmtMoney(s.base)}`;
+}
+
 /* getValue lida com os 3 tipos de item:
    - variavel: valor lançado mês a mês (comportamento original)
    - fixo: repete um valor padrão todo mês, mas pode ser sobrescrito num mês específico
-   - parcelado: calculado automaticamente a partir do mês/valor/nº de parcelas, sem edição manual */
+   - parcelado: calculado a partir do valor total da compra e do nº de parcelas,
+     com a sobra de centavos na 1ª parcela; cada mês pode ser ajustado manualmente
+     (ex.: a fatura veio diferente) sem afetar os outros meses */
 function getValue(itemId, ym) {
   const item = findItem(itemId);
   if (!item) return null;
@@ -134,6 +162,16 @@ function getValue(itemId, ym) {
     if (!item.startYm || !item.installments) return null;
     const idx = monthDiff(ym, item.startYm);
     if (idx < 0 || idx >= Number(item.installments)) return null;
+
+    const override = cache.monthlyValues[`${itemId}|${ym}`];
+    if (override !== undefined && override !== null && override !== "") {
+      return Number(override);
+    }
+
+    if (item.totalValue !== undefined && item.totalValue !== null && item.totalValue !== "") {
+      return parcValue(Number(item.totalValue), Number(item.installments), idx);
+    }
+    // item parcelado antigo (sem valorTotal): mantém o comportamento anterior
     return Number(item.installmentValue) || 0;
   }
 
@@ -441,6 +479,8 @@ function renderGroupPanels() {
         let dateLabel = "";
         if (it.type === "fixo" && it.diaVenc) {
           dateLabel = `Vence dia ${String(it.diaVenc).padStart(2, "0")}`;
+        } else if (it.type === "parcelado" && it.totalValue !== undefined && it.totalValue !== null && it.totalValue !== "") {
+          dateLabel = `Compra de ${fmtMoney(it.totalValue)}` + (it.dataLanc ? ` · ${fmtDate(it.dataLanc)}` : "");
         } else if (it.dataLanc) {
           dateLabel = `Registrado em ${fmtDate(it.dataLanc)}`;
         }
@@ -608,20 +648,53 @@ function monthLabelFromYm(ym) {
   return `${MESES[m - 1]} de ${y}`;
 }
 
-function typeFieldsHtml(type, existing) {
+/* editMode só importa para tipo "parcelado" ao EDITAR um item que já era parcelado:
+   "compra" = recalcula as parcelas a partir do valor total; "parcela" = ajusta só o mês atual. */
+function typeFieldsHtml(type, existing, editMode) {
   if (type === "fixo") {
     return `<div class="field"><label>Valor fixo mensal</label><input type="number" step="0.01" id="fItemFixed" placeholder="0,00" value="${existing && existing.fixedValue != null ? existing.fixedValue : ""}"></div>
       <p class="empty-hint" style="margin-top:-6px;">Esse valor se repete todo mês sozinho. Dá pra mudar em um mês específico direto na lista, sem afetar os outros.</p>
       <div class="field"><label>Dia de vencimento</label><input type="number" min="1" max="31" step="1" id="fItemVenc" placeholder="Ex: 10" value="${existing && existing.diaVenc != null ? existing.diaVenc : ""}"></div>`;
   }
+
   if (type === "parcelado") {
-    const startLabel = existing && existing.startYm ? monthLabelFromYm(existing.startYm) : monthLabelFromYm(currentYM);
-    return `
-      <div class="field"><label>Valor da parcela</label><input type="number" step="0.01" id="fItemInstallVal" placeholder="0,00" value="${existing && existing.installmentValue != null ? existing.installmentValue : ""}"></div>
-      <div class="field"><label>Número de parcelas</label><input type="number" min="1" step="1" id="fItemInstallCount" placeholder="Ex: 10" value="${existing && existing.installments ? existing.installments : ""}"></div>
-      <p class="empty-hint" style="margin-top:-6px;">1ª parcela em ${startLabel}. As parcelas seguintes aparecem sozinhas nos próximos meses.</p>
-    `;
+    const isEditingParcelado = !!(existing && existing.type === "parcelado");
+    const soParcela = isEditingParcelado && editMode === "parcela";
+
+    const editModoField = isEditingParcelado ? `
+      <div class="field">
+        <label>O que alterar?</label>
+        <select id="fItemEditModo">
+          <option value="compra"${editMode !== "parcela" ? " selected" : ""}>Compra inteira (recalcula as parcelas)</option>
+          <option value="parcela"${editMode === "parcela" ? " selected" : ""}>Só esta parcela (${monthLabelFromYm(currentYM)})</option>
+        </select>
+      </div>
+    ` : "";
+
+    if (soParcela) {
+      const currentVal = getValue(existing.id, currentYM);
+      return `${editModoField}
+        <div class="field"><label>Valor desta parcela (R$)</label><input type="number" step="0.01" id="fItemInstallVal" placeholder="0,00" value="${currentVal === null ? "" : currentVal}"></div>
+        <p class="empty-hint" style="margin-top:-6px;">Ajusta só o mês de ${monthLabelFromYm(currentYM)} (ex.: a fatura veio diferente). Os outros meses continuam como estavam.</p>`;
+    }
+
+    // modo "compra inteira" (item novo, ou editando a compra toda)
+    let prefillTotal = "";
+    if (existing) {
+      if (existing.totalValue !== undefined && existing.totalValue !== null && existing.totalValue !== "") {
+        prefillTotal = existing.totalValue;
+      } else if (existing.installmentValue != null && existing.installments) {
+        // item parcelado antigo sem valorTotal: mostra valor×parcelas (round-trip estável)
+        prefillTotal = Math.round(Number(existing.installmentValue) * Number(existing.installments) * 100) / 100;
+      }
+    }
+    const prefillCount = existing && existing.installments ? existing.installments : "";
+    return `${editModoField}
+      <div class="field"><label>Valor total da compra (R$)</label><input type="number" step="0.01" id="fItemInstallVal" placeholder="0,00" value="${prefillTotal}"></div>
+      <div class="field"><label>Número de parcelas</label><input type="number" min="2" max="120" step="1" id="fItemInstallCount" placeholder="Ex: 10" value="${prefillCount}"></div>
+      <div id="parcPreview" class="parc-preview">${escapeHtml(parcPreviewText(prefillTotal, Number(prefillCount) || 0))}</div>`;
   }
+
   return `<p class="empty-hint" style="margin:0;">O valor é lançado mês a mês, direto na lista do grupo.</p>`;
 }
 
@@ -630,6 +703,7 @@ function openItemModal(groupId, itemId) {
   if (!group) return;
   const existing = itemId ? findItem(itemId) : null;
   let selectedType = existing ? existing.type : "variavel";
+  let installEditMode = "compra";
 
   const cardOptions = Array.from(new Set(
     cache.items.filter((i) => i.groupId === groupId && i.card).map((i) => i.card)
@@ -659,7 +733,7 @@ function openItemModal(groupId, itemId) {
         <button type="button" class="type-opt${selectedType === "parcelado" ? " active" : ""}" data-type="parcelado">Parcelado</button>
       </div>
     </div>
-    <div id="typeFieldsWrap">${typeFieldsHtml(selectedType, existing)}</div>
+    <div id="typeFieldsWrap">${typeFieldsHtml(selectedType, existing, installEditMode)}</div>
   `;
 
   openModal(
@@ -669,13 +743,33 @@ function openItemModal(groupId, itemId) {
       const name = document.getElementById("fItemName").value.trim();
       if (!name) { toast("Dê um nome"); return false; }
 
-      const payload = { name, type: selectedType };
+      const soParcela = !!existing && existing.type === "parcelado" && selectedType === "parcelado" && installEditMode === "parcela";
+
+      // Ajuste manual de UMA parcela (ex.: a fatura veio diferente): muda só o mês atual
+      if (soParcela) {
+        const val = parseFloat(document.getElementById("fItemInstallVal").value);
+        if (isNaN(val) || val <= 0) { toast("Informe o valor desta parcela"); return false; }
+        existing.name = name;
+        persist();
+        setValue(existing.id, currentYM, val);
+        toast("Parcela ajustada só neste mês");
+        render();
+        switchTab(`group-${groupId}`);
+        return;
+      }
 
       if (group.isCard) {
         const card = document.getElementById("fItemCard").value.trim();
         if (!card) { toast("Diga a qual cartão pertence"); return false; }
-        payload.card = card;
       }
+
+      const payload = { name, type: selectedType };
+
+      if (group.isCard) {
+        payload.card = document.getElementById("fItemCard").value.trim();
+      }
+
+      let savedPreviewText = "";
 
       if (selectedType === "fixo") {
         const fv = parseFloat(document.getElementById("fItemFixed").value);
@@ -683,16 +777,26 @@ function openItemModal(groupId, itemId) {
         const dv = parseInt(document.getElementById("fItemVenc").value, 10);
         if (!dv || dv < 1 || dv > 31) { toast("Informe o dia de vencimento (1-31)"); return false; }
         payload.diaVenc = dv;
+        payload.totalValue = null;
+        payload.installmentValue = null;
+        payload.installments = null;
       } else if (selectedType === "parcelado") {
-        const iv = parseFloat(document.getElementById("fItemInstallVal").value);
-        const ic = parseInt(document.getElementById("fItemInstallCount").value, 10);
-        if (isNaN(iv) || isNaN(ic) || ic < 1) { toast("Preencha valor e número de parcelas"); return false; }
-        payload.installmentValue = iv;
-        payload.installments = ic;
+        const totalValue = parseFloat(document.getElementById("fItemInstallVal").value);
+        const installments = parseInt(document.getElementById("fItemInstallCount").value, 10);
+        if (isNaN(totalValue) || totalValue <= 0) { toast("Informe o valor total da compra"); return false; }
+        if (isNaN(installments) || installments < 2) { toast("Informe o número de parcelas (mín. 2)"); return false; }
+        if (installments > 120) { toast("Máximo de 120 parcelas"); return false; }
+        payload.totalValue = totalValue;
+        payload.installments = installments;
+        payload.installmentValue = null; // modelo novo passa a usar totalValue + installments
         payload.startYm = (existing && existing.startYm) ? existing.startYm : currentYM;
         payload.diaVenc = null;
+        savedPreviewText = parcPreviewText(totalValue, installments);
       } else {
         payload.diaVenc = null;
+        payload.totalValue = null;
+        payload.installmentValue = null;
+        payload.installments = null;
       }
 
       if (existing) {
@@ -700,7 +804,7 @@ function openItemModal(groupId, itemId) {
         toast("Item atualizado");
       } else {
         cache.items.push({ id: uid(), groupId, dataLanc: new Date().toISOString(), ...payload });
-        toast(group.isCard ? "Compra adicionada" : "Item adicionado");
+        toast(selectedType === "parcelado" ? `Compra parcelada salva! ${savedPreviewText}` : (group.isCard ? "Compra adicionada" : "Item adicionado"));
       }
       persist();
       render();
@@ -708,12 +812,40 @@ function openItemModal(groupId, itemId) {
     }
   );
 
+  function rebuildTypeFields() {
+    document.getElementById("typeFieldsWrap").innerHTML = typeFieldsHtml(selectedType, existing, installEditMode);
+    attachParcListeners();
+  }
+
+  function attachParcListeners() {
+    const editModoSel = document.getElementById("fItemEditModo");
+    if (editModoSel) {
+      editModoSel.addEventListener("change", () => {
+        installEditMode = editModoSel.value;
+        rebuildTypeFields();
+      });
+    }
+    const valInput = document.getElementById("fItemInstallVal");
+    const countInput = document.getElementById("fItemInstallCount");
+    const preview = document.getElementById("parcPreview");
+    if (valInput && countInput && preview) {
+      const updatePreview = () => {
+        preview.textContent = parcPreviewText(parseFloat(valInput.value), parseInt(countInput.value, 10) || 0);
+      };
+      valInput.addEventListener("input", updatePreview);
+      countInput.addEventListener("input", updatePreview);
+    }
+  }
+
+  attachParcListeners();
+
   document.getElementById("typeToggle").addEventListener("click", (e) => {
     const btn = e.target.closest(".type-opt");
     if (!btn) return;
     selectedType = btn.getAttribute("data-type");
+    installEditMode = "compra";
     document.querySelectorAll("#typeToggle .type-opt").forEach((b) => b.classList.toggle("active", b === btn));
-    document.getElementById("typeFieldsWrap").innerHTML = typeFieldsHtml(selectedType, existing);
+    rebuildTypeFields();
   });
 }
 
