@@ -10,9 +10,10 @@ const STORE = "state";
 const STATE_KEY = "app-state";
 
 const MESES = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
-const MESES_ABREV = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
 
 const GROUP_COLORS = ["#e8a0bb", "#b39ddb", "#e0c097", "#e8918a", "#8fc9d6", "#c9b3e8", "#9ed6b0", "#e8c1e0"];
+
+let newGroupFormColor = GROUP_COLORS[0]; // cor selecionada no formulário de novo grupo (aba Editar)
 
 let db = null;
 let cache = null; // in-memory mirror of state, always source of truth for rendering
@@ -28,14 +29,16 @@ function uid() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 }
 
-function groupColor(index) {
-  return GROUP_COLORS[index % GROUP_COLORS.length];
+function groupColor(group, idx) {
+  if (group && group.color) return group.color;
+  return GROUP_COLORS[idx % GROUP_COLORS.length];
 }
 
 function defaultState() {
   return {
     groups: [],           // [{id, name, isCard}]
-    items: [],             // [{id, groupId, name, type, fixedValue?, card?, installmentValue?, totalValue?, installments?, startYm?, dataLanc?, diaVenc?}]
+    items: [],             // [{id, groupId, name, type, fixedValue?, card?, installmentValue?, totalValue?, installments?, startYm?, dataLanc?, diaVenc?, categoryId?}]
+    categories: [],         // [{id, name, color}]
     monthlyValues: {},     // { "itemId|YYYY-MM": number }  (overrides for tipo variável/fixo/parcelado)
     monthlyIncome: {},     // { "YYYY-MM": number }
     extraIncome: {},       // { "YYYY-MM": [{id, desc, value}] }
@@ -228,6 +231,7 @@ function render() {
   renderNav();
   renderGroupPanels();
   renderDashboard();
+  renderEditTab();
   applyActiveTab();
 }
 
@@ -268,16 +272,17 @@ function renderNav() {
     btn.className = "nav-btn";
     btn.setAttribute("data-tab", `group-${g.id}`);
     const label = g.name.length > 10 ? g.name.slice(0, 9) + "…" : g.name;
-    btn.innerHTML = `<span class="nav-dot" style="background:${groupColor(idx)}"></span><span class="nav-label">${escapeHtml(label)}</span>`;
+    btn.innerHTML = `<span class="nav-dot" style="background:${groupColor(g, idx)}"></span><span class="nav-label">${escapeHtml(label)}</span>`;
     btn.addEventListener("click", () => switchTab(`group-${g.id}`));
     nav.appendChild(btn);
   });
 
-  const addBtn = document.createElement("button");
-  addBtn.className = "nav-btn nav-add";
-  addBtn.innerHTML = `<span class="nav-icon">+</span><span class="nav-label">Grupo</span>`;
-  addBtn.addEventListener("click", openGroupModal);
-  nav.appendChild(addBtn);
+  const editBtn = document.createElement("button");
+  editBtn.className = "nav-btn";
+  editBtn.setAttribute("data-tab", "tab-edit");
+  editBtn.innerHTML = `<span class="nav-icon">⚙</span><span class="nav-label">Editar</span>`;
+  editBtn.addEventListener("click", () => switchTab("tab-edit"));
+  nav.appendChild(editBtn);
 }
 
 /* ---------------- Rendering: dashboard ---------------- */
@@ -336,7 +341,7 @@ function renderDonut(expenseTotal) {
   wrap.innerHTML = "";
 
   const data = cache.groups
-    .map((g, idx) => ({ name: g.name, total: groupTotal(g.id, currentYM), color: groupColor(idx) }))
+    .map((g, idx) => ({ name: g.name, total: groupTotal(g.id, currentYM), color: groupColor(g, idx) }))
     .filter((g) => g.total > 0)
     .sort((a, b) => b.total - a.total);
 
@@ -389,7 +394,7 @@ function renderGroupCards() {
     const card = document.createElement("button");
     card.className = "group-mini-card";
     card.innerHTML = `
-      <div class="gm-name"><span class="nav-dot" style="background:${groupColor(idx)};margin:0;"></span>${escapeHtml(g.name)}</div>
+      <div class="gm-name"><span class="nav-dot" style="background:${groupColor(g, idx)};margin:0;"></span>${escapeHtml(g.name)}</div>
       <div class="gm-value">${fmtMoney(total)}</div>
     `;
     card.addEventListener("click", () => switchTab(`group-${g.id}`));
@@ -401,17 +406,17 @@ function renderHistory() {
   const wrap = document.getElementById("historyWrap");
   wrap.innerHTML = "";
 
-  const months = new Set();
-  Object.keys(cache.monthlyIncome).forEach((ym) => months.add(ym));
-  Object.keys(cache.extraIncome).forEach((ym) => months.add(ym));
-  Object.keys(cache.monthlyValues).forEach((k) => months.add(k.split("|")[1]));
-  months.add(currentYM);
-
-  const sorted = Array.from(months).sort().reverse().slice(0, 6);
-
-  if (sorted.length === 0) {
-    wrap.innerHTML = `<p class="empty-hint">Sem histórico ainda.</p>`;
-    return;
+  /* Antes, os meses do histórico eram descobertos varrendo apenas chaves
+     já salvas (renda, extras, lançamentos). Isso deixava de fora meses em
+     que a única movimentação era um item fixo ou parcelado (calculados na
+     hora, sem gravar chave nenhuma) — por isso o gasto "sumia" do
+     histórico em meses futuros. Agora o período é sempre os 6 meses
+     terminando no mês atual, calculados diretamente pela data, então
+     fixos e parcelados aparecem corretamente. */
+  const sorted = [];
+  for (let i = 0; i < 6; i++) {
+    const d = new Date(current.getFullYear(), current.getMonth() - i, 1);
+    sorted.push(ymKey(d));
   }
 
   sorted.forEach((ym) => {
@@ -443,7 +448,7 @@ function renderGroupPanels() {
 
     panel.innerHTML = `
       <div class="group-panel-header">
-        <span class="gph-title"><span class="nav-dot" style="background:${groupColor(idx)};margin:0;"></span>${escapeHtml(g.name)}</span>
+        <span class="gph-title"><span class="nav-dot" style="background:${groupColor(g, idx)};margin:0;"></span>${escapeHtml(g.name)}</span>
         <span class="gph-total">${fmtMoney(total)}</span>
       </div>
       <div class="group-panel-actions">
@@ -474,6 +479,10 @@ function renderGroupPanels() {
           const idx = it.startYm ? monthDiff(currentYM, it.startYm) : -1;
           const label = (idx >= 0 && idx < it.installments) ? `${idx + 1}/${it.installments}` : `${it.installments}x`;
           tags.push(`<span class="item-tag tag-parcelado">parcela ${label}</span>`);
+        }
+        if (it.categoryId) {
+          const cat = cache.categories.find((c) => c.id === it.categoryId);
+          if (cat) tags.push(`<span class="item-tag" style="background:${cat.color}2e;color:${cat.color};">${escapeHtml(cat.name)}</span>`);
         }
 
         let dateLabel = "";
@@ -595,29 +604,6 @@ function openModal(title, fieldsHtml, onConfirm, opts = {}) {
   }, 50);
 }
 
-function openGroupModal() {
-  openModal(
-    "Novo grupo",
-    `<div class="field"><label>Nome do grupo</label><input type="text" id="fGroupName" placeholder="Ex: Moradia, Saúde, Cartão..."></div>
-     <label class="checkbox-row">
-       <input type="checkbox" id="fGroupIsCard">
-       <span>Este grupo é de cartão de crédito</span>
-     </label>
-     <p class="empty-hint" style="margin-top:6px;">Marcando isso, cada item vira uma compra: você diz o cartão e se é única ou parcelada.</p>`,
-    () => {
-      const name = document.getElementById("fGroupName").value.trim();
-      if (!name) { toast("Dê um nome ao grupo"); return false; }
-      const isCard = document.getElementById("fGroupIsCard").checked;
-      const newId = uid();
-      cache.groups.push({ id: newId, name, isCard });
-      persist();
-      render();
-      switchTab(`group-${newId}`);
-      toast("Grupo criado");
-    }
-  );
-}
-
 function openRenameGroupModal(groupId) {
   const g = cache.groups.find((x) => x.id === groupId);
   if (!g) return;
@@ -638,6 +624,180 @@ function openRenameGroupModal(groupId) {
       switchTab(`group-${groupId}`);
       toast("Grupo atualizado");
     }
+  );
+}
+
+/* ---------------- Categorias: criar / editar / excluir ---------------- */
+
+function colorSwatchesHtml(selected) {
+  return GROUP_COLORS.map((c) => `
+    <span class="color-swatch" data-color="${c}" style="display:inline-block;width:24px;height:24px;border-radius:50%;background:${c};margin:3px 5px 3px 0;cursor:pointer;border:2px solid ${c === selected ? "var(--text)" : "transparent"};"></span>
+  `).join("");
+}
+
+/* Renderiza os círculos de cor num container e liga os cliques,
+   religando de novo a cada escolha (já que o HTML é substituído). */
+function renderCatSwatches(containerId, getSelected, onPick) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.innerHTML = colorSwatchesHtml(getSelected());
+  container.querySelectorAll("[data-color]").forEach((sw) => {
+    sw.addEventListener("click", () => {
+      onPick(sw.getAttribute("data-color"));
+      renderCatSwatches(containerId, getSelected, onPick);
+    });
+  });
+}
+
+function categoryRowsHtml() {
+  if (!cache.categories.length) {
+    return `<p class="empty-hint" style="margin:0 0 14px;">Nenhuma categoria criada ainda.</p>`;
+  }
+  return cache.categories.map((c) => `
+    <div class="item-row" style="justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--border);">
+      <span class="iname" style="display:flex;align-items:center;gap:8px;color:var(--text);white-space:normal;">
+        <span style="width:9px;height:9px;border-radius:50%;background:${c.color};display:inline-block;flex-shrink:0;"></span>
+        ${escapeHtml(c.name)}
+      </span>
+      <span style="display:flex;gap:4px;flex-shrink:0;">
+        <button type="button" class="link-btn" data-edit-cat="${c.id}" style="padding:2px 8px;">editar</button>
+        <button type="button" class="link-btn" data-del-cat="${c.id}" style="padding:2px 8px;color:var(--coral);">excluir</button>
+      </span>
+    </div>
+  `).join("");
+}
+
+/* Liga os botões editar/excluir de uma lista de categorias já inserida no DOM
+   (usado tanto pela aba Editar quanto, se precisar, por qualquer outro lugar). */
+function wireCatRowEvents(containerEl) {
+  if (!containerEl) return;
+  containerEl.querySelectorAll("[data-edit-cat]").forEach((btn) => {
+    btn.addEventListener("click", () => openRenameCategoryModal(btn.getAttribute("data-edit-cat")));
+  });
+  containerEl.querySelectorAll("[data-del-cat]").forEach((btn) => {
+    btn.addEventListener("click", () => confirmDeleteCategory(btn.getAttribute("data-del-cat")));
+  });
+}
+
+function openNewCategoryModal() {
+  let localColor = GROUP_COLORS[cache.categories.length % GROUP_COLORS.length];
+  openModal(
+    "Nova categoria",
+    `<div class="field"><label>Nome</label><input type="text" id="fNewCatName" placeholder="Ex: Farmácia, Mercado..."></div>
+     <div class="field"><label>Cor</label><div id="newCatColorSwatches"></div></div>`,
+    () => {
+      const name = document.getElementById("fNewCatName").value.trim();
+      if (!name) { toast("Dê um nome à categoria"); return false; }
+      cache.categories.push({ id: uid(), name, color: localColor });
+      persist();
+      render();
+      toast("Categoria criada");
+    },
+    { confirmLabel: "Criar categoria" }
+  );
+  renderCatSwatches("newCatColorSwatches", () => localColor, (c) => { localColor = c; });
+}
+
+
+/* ---------------- Aba Editar: grupos + categorias, listados inline ---------------- */
+
+function editGroupRowsHtml() {
+  if (!cache.groups.length) {
+    return `<p class="empty-hint" style="margin:0 0 14px;">Nenhum grupo criado ainda.</p>`;
+  }
+  return cache.groups.map((g, idx) => {
+    const count = cache.items.filter((it) => it.groupId === g.id).length;
+    return `
+    <div class="item-row" style="justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--border);">
+      <span class="iname" style="display:flex;align-items:center;gap:8px;color:var(--text);white-space:normal;">
+        <span style="width:9px;height:9px;border-radius:50%;background:${groupColor(g, idx)};display:inline-block;flex-shrink:0;"></span>
+        ${escapeHtml(g.name)}
+        <span style="color:var(--muted);font-size:0.78rem;">${count} ${count === 1 ? "item" : "itens"}</span>
+      </span>
+      <span style="display:flex;gap:4px;flex-shrink:0;">
+        <button type="button" class="link-btn" data-edit-group="${g.id}" style="padding:2px 8px;">editar</button>
+        <button type="button" class="link-btn" data-del-group="${g.id}" style="padding:2px 8px;color:var(--coral);">excluir</button>
+      </span>
+    </div>`;
+  }).join("");
+}
+
+function wireEditGroupListEvents(containerEl) {
+  if (!containerEl) return;
+  containerEl.querySelectorAll("[data-edit-group]").forEach((btn) => {
+    btn.addEventListener("click", () => openRenameGroupModal(btn.getAttribute("data-edit-group")));
+  });
+  containerEl.querySelectorAll("[data-del-group]").forEach((btn) => {
+    btn.addEventListener("click", () => confirmDeleteGroup(btn.getAttribute("data-del-group")));
+  });
+}
+
+function createGroupInline() {
+  const nameInput = document.getElementById("newGroupName");
+  const name = nameInput.value.trim();
+  if (!name) { toast("Dê um nome ao grupo"); return; }
+  const isCard = document.getElementById("newGroupIsCard").checked;
+  cache.groups.push({ id: uid(), name, isCard, color: newGroupFormColor });
+  persist();
+  toast("Grupo criado");
+  nameInput.value = "";
+  document.getElementById("newGroupIsCard").checked = false;
+  render();
+}
+
+/* Redesenha a aba "Editar": lista de grupos, formulário de novo grupo (com
+   paleta de cores) e lista de categorias — tudo inline, sem popup, igual
+   ao controle-fin-v9.html, só que com a identidade visual do app. */
+function renderEditTab() {
+  const groupListEl = document.getElementById("editGroupList");
+  const catListEl = document.getElementById("editCatList");
+  if (!groupListEl || !catListEl) return; // aba ainda não existe no DOM (defensivo)
+
+  groupListEl.innerHTML = editGroupRowsHtml();
+  wireEditGroupListEvents(groupListEl);
+
+  catListEl.innerHTML = categoryRowsHtml();
+  wireCatRowEvents(catListEl);
+
+  renderCatSwatches("newGroupColorPicks", () => newGroupFormColor, (c) => { newGroupFormColor = c; });
+}
+
+function openRenameCategoryModal(catId) {
+  const cat = cache.categories.find((c) => c.id === catId);
+  if (!cat) return;
+  let localColor = cat.color;
+  openModal(
+    "Editar categoria",
+    `<div class="field"><label>Nome</label><input type="text" id="fCatRename" value="${escapeHtml(cat.name)}"></div>
+     <div class="field"><label>Cor</label><div id="editCatColorSwatches"></div></div>`,
+    () => {
+      const name = document.getElementById("fCatRename").value.trim();
+      if (!name) { toast("Dê um nome à categoria"); return false; }
+      cat.name = name;
+      cat.color = localColor;
+      persist();
+      render();
+      toast("Categoria atualizada");
+    },
+    { confirmLabel: "Salvar" }
+  );
+  renderCatSwatches("editCatColorSwatches", () => localColor, (c) => { localColor = c; });
+}
+
+function confirmDeleteCategory(catId) {
+  const cat = cache.categories.find((c) => c.id === catId);
+  if (!cat) return;
+  openModal(
+    `Excluir categoria "${cat.name}"?`,
+    `<p style="color:var(--muted);font-size:0.88rem;line-height:1.5;">Os itens que usam essa categoria voltam a ficar sem categoria. Essa ação não pode ser desfeita.</p>`,
+    () => {
+      cache.items.forEach((it) => { if (it.categoryId === catId) it.categoryId = null; });
+      cache.categories = cache.categories.filter((c) => c.id !== catId);
+      persist();
+      render();
+      toast("Categoria excluída");
+    },
+    { confirmLabel: "Excluir", danger: true }
   );
 }
 
@@ -734,6 +894,13 @@ function openItemModal(groupId, itemId) {
       </div>
     </div>
     <div id="typeFieldsWrap">${typeFieldsHtml(selectedType, existing, installEditMode)}</div>
+    <div class="field">
+      <label>Categoria <span style="color:var(--muted);font-weight:400;">(opcional)</span></label>
+      <select id="fItemCategory">
+        <option value="">Nenhuma</option>
+        ${cache.categories.map((c) => `<option value="${c.id}" ${existing && existing.categoryId === c.id ? "selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}
+      </select>
+    </div>
   `;
 
   openModal(
@@ -744,12 +911,14 @@ function openItemModal(groupId, itemId) {
       if (!name) { toast("Dê um nome"); return false; }
 
       const soParcela = !!existing && existing.type === "parcelado" && selectedType === "parcelado" && installEditMode === "parcela";
+      const catVal = document.getElementById("fItemCategory").value;
 
       // Ajuste manual de UMA parcela (ex.: a fatura veio diferente): muda só o mês atual
       if (soParcela) {
         const val = parseFloat(document.getElementById("fItemInstallVal").value);
         if (isNaN(val) || val <= 0) { toast("Informe o valor desta parcela"); return false; }
         existing.name = name;
+        existing.categoryId = catVal || null;
         persist();
         setValue(existing.id, currentYM, val);
         toast("Parcela ajustada só neste mês");
@@ -763,7 +932,7 @@ function openItemModal(groupId, itemId) {
         if (!card) { toast("Diga a qual cartão pertence"); return false; }
       }
 
-      const payload = { name, type: selectedType };
+      const payload = { name, type: selectedType, categoryId: catVal || null };
 
       if (group.isCard) {
         payload.card = document.getElementById("fItemCard").value.trim();
@@ -1003,13 +1172,20 @@ async function init() {
   db = await openDB();
   cache = await loadState();
 
+  // compatibilidade: quem já tinha dados salvos antes das categorias existirem
+  if (!cache.categories) cache.categories = [];
+
   if (!cache.seeded) {
     seedStarterGroups();
     persist();
   }
 
+  newGroupFormColor = GROUP_COLORS[cache.groups.length % GROUP_COLORS.length];
+
   document.getElementById("prevMonth").addEventListener("click", () => changeMonth(-1));
   document.getElementById("nextMonth").addEventListener("click", () => changeMonth(1));
+  document.getElementById("createGroupBtn").addEventListener("click", createGroupInline);
+  document.getElementById("newCatBtnTab").addEventListener("click", openNewCategoryModal);
 
   document.getElementById("monthlyIncomeInput").addEventListener("input", (e) => {
     cache.monthlyIncome[currentYM] = e.target.value === "" ? undefined : Number(e.target.value);

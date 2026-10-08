@@ -100,6 +100,34 @@
     </div>
   </section>
 
+  <!-- ABA: EDITAR (grupos + categorias, tudo inline — igual ao controle-fin-v9.html) -->
+  <section class="tab-panel" id="tab-edit">
+    <div class="card">
+      <div class="card-title"><h2>Grupos ativos</h2></div>
+      <div id="editGroupList"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title"><h2>+ Criar novo grupo</h2></div>
+      <div class="field"><label>Nome do grupo</label><input type="text" id="newGroupName" placeholder="Ex: Lazer, Saúde..."></div>
+      <label class="checkbox-row">
+        <input type="checkbox" id="newGroupIsCard">
+        <span>Este grupo é de cartão de crédito</span>
+      </label>
+      <div class="field" style="margin-top:10px;">
+        <label>Cor</label>
+        <div id="newGroupColorPicks"></div>
+      </div>
+      <button class="primary-btn" id="createGroupBtn">Criar Grupo</button>
+    </div>
+
+    <div class="card">
+      <div class="card-title"><h2>Categorias</h2></div>
+      <div id="editCatList"></div>
+      <button class="link-btn" id="newCatBtnTab" style="margin-top:8px;">+ Nova Categoria</button>
+    </div>
+  </section>
+
   <!-- ABAS: uma por grupo (geradas dinamicamente) -->
   <div id="groupPanelsWrap"></div>
 
