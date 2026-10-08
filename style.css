@@ -245,7 +245,7 @@ body::before {
   color: var(--muted);
 }
 
-input[type="number"], input[type="text"], select {
+input[type="number"], input[type="text"] {
   background: var(--bg-soft);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -446,6 +446,21 @@ input::placeholder { color: var(--muted2); }
 .tag-card { background: rgba(179,157,219,0.18); color: var(--lilac); }
 .tag-fixo { background: rgba(224,192,151,0.18); color: var(--gold); }
 .tag-parcelado { background: rgba(232,145,138,0.18); color: var(--coral); }
+
+.parc-preview {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(179,157,219,0.14);
+  color: var(--lilac);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.item-date {
+  font-size: 0.68rem;
+  color: var(--muted2);
+}
 
 .ival-static {
   width: 100px;
